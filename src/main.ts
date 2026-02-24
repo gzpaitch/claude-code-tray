@@ -1,5 +1,5 @@
 import { exec } from "node:child_process";
-import path from "node:path";
+import * as path from "node:path";
 import {
 	app,
 	BrowserWindow,
@@ -516,13 +516,13 @@ function generateDetailsHtml(usage: UsageData): string {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 8px;
-		padding: 10px 0;
+		gap: 10px;
+		padding: 14px 0;
 		background: var(--bg-card);
 		border: 1px solid var(--border-card);
 		border-radius: 8px;
 		color: var(--text-primary);
-		font-size: 13px;
+		font-size: 14px;
 		font-weight: 600;
 		font-family: inherit;
 		cursor: pointer;
@@ -531,19 +531,19 @@ function generateDetailsHtml(usage: UsageData): string {
 	}
 	.launch-btn:hover { background: var(--bg-card-hover); }
 	.launch-btn .btn-icon {
-		width: 20px;
-		height: 20px;
+		width: 28px;
+		height: 28px;
 		flex-shrink: 0;
-		border-radius: 4px;
+		border-radius: 6px;
 	}
 	.launch-btn .btn-text {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		line-height: 1.2;
+		line-height: 1.3;
 	}
 	.launch-btn .label-sub {
-		font-size: 11px;
+		font-size: 12px;
 		font-weight: 400;
 		color: var(--text-tertiary);
 	}
@@ -559,22 +559,26 @@ function generateDetailsHtml(usage: UsageData): string {
 	</button>
 	<div class="extra-content" id="extraContent">
 		<div class="extra-content-inner">
+		<div style="padding: 14px 0 12px;">
 		<div class="card" style="border:none;padding:0;margin-bottom:0;background:transparent;">
-			<h2>Last 7 Days</h2>
+			<h2 style="padding-left: 8px;">Last 7 Days</h2>
 			<table>
 				<tr><th>Date</th><th>Msgs</th><th>Sessions</th><th>Tools</th></tr>
 				${last7Html}
 			</table>
 		</div>
-		<div class="card" style="border:none;padding:8px 0 0;background:transparent;">
-			<h2>All-time by Model</h2>
-			${modelsHtml}
+		<div class="card" style="border:none;padding:14px 0 0;background:transparent;">
+			<h2 style="padding-left: 8px;">All-time by Model</h2>
+			<div style="padding: 0 8px;">${modelsHtml}</div>
 		</div>
 		<div class="card" style="border:none;padding:8px 0 0;margin-bottom:0;background:transparent;">
-			<div class="stat-row"><span>Total Messages</span><span class="value">${usage.totalMessages.toLocaleString()}</span></div>
-			<div class="stat-row"><span>Total Sessions</span><span class="value">${usage.totalSessions}</span></div>
+			<div style="padding: 0 8px;">
+				<div class="stat-row"><span>Total Messages</span><span class="value">${usage.totalMessages.toLocaleString()}</span></div>
+				<div class="stat-row"><span>Total Sessions</span><span class="value">${usage.totalSessions}</span></div>
+			</div>
 		</div>
 		<div class="footer">Stats last computed ${usage.lastComputedDate}</div>
+		</div>
 		</div>
 	</div>
 	<div class="launch-actions">

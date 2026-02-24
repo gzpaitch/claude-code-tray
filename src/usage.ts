@@ -1,6 +1,6 @@
-import { readFileSync, watch } from "fs";
-import { join } from "path";
-import { homedir } from "os";
+import { readFile as readFileCb, readFileSync, watch } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 interface DailyActivity {
 	date: string;
@@ -89,9 +89,8 @@ function formatAge(ms: number): string {
 	return `${days}d ago`;
 }
 
-function readRateLimit(): RateLimitData | null {
+function parseRateLimit(raw: string): RateLimitData | null {
 	try {
-		const raw = readFileSync(RATE_LIMIT_PATH, "utf-8");
 		const data: RateLimitCache = JSON.parse(raw);
 		const now = Date.now();
 		const ageMs = now - data.timestamp;
@@ -112,10 +111,17 @@ function readRateLimit(): RateLimitData | null {
 	}
 }
 
-export function readUsage(): UsageData {
-	const raw = readFileSync(STATS_PATH, "utf-8");
-	const stats: StatsCache = JSON.parse(raw);
+function readRateLimit(): RateLimitData | null {
+	try {
+		const raw = readFileSync(RATE_LIMIT_PATH, "utf-8");
+		return parseRateLimit(raw);
+	} catch {
+		return null;
+	}
+}
 
+function parseUsage(statsRaw: string, rateLimitRaw?: string): UsageData {
+	const stats: StatsCache = JSON.parse(statsRaw);
 	const todayStr = new Date().toISOString().split("T")[0];
 
 	const today = stats.dailyActivity.find((d) => d.date === todayStr) ?? null;
@@ -133,8 +139,30 @@ export function readUsage(): UsageData {
 		modelUsage: stats.modelUsage,
 		lastComputedDate: stats.lastComputedDate,
 		last7Days: last7,
-		rateLimit: readRateLimit(),
+		rateLimit: rateLimitRaw ? parseRateLimit(rateLimitRaw) : readRateLimit(),
 	};
+}
+
+export function readUsage(): UsageData {
+	const raw = readFileSync(STATS_PATH, "utf-8");
+	return parseUsage(raw);
+}
+
+function readFileAsync(path: string): Promise<string> {
+	return new Promise((resolve, reject) => {
+		readFileCb(path, "utf-8", (err, data) => {
+			if (err) reject(err);
+			else resolve(data);
+		});
+	});
+}
+
+export async function readUsageAsync(): Promise<UsageData> {
+	const [statsRaw, rateLimitRaw] = await Promise.all([
+		readFileAsync(STATS_PATH),
+		readFileAsync(RATE_LIMIT_PATH).catch(() => undefined),
+	]);
+	return parseUsage(statsRaw, rateLimitRaw);
 }
 
 export function watchFiles(onChange: () => void): void {
