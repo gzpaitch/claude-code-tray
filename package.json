@@ -1,0 +1,40 @@
+{
+	"name": "claude-code-tray",
+	"version": "1.0.0",
+	"description": "System tray app to monitor Claude Code usage",
+	"main": "dist/main.js",
+	"author": "gzpai",
+	"scripts": {
+		"build": "tsc",
+		"start": "tsc && electron dist/main.js",
+		"dev": "tsc --watch & electron dist/main.js",
+		"dist": "tsc && electron-builder --win portable"
+	},
+	"build": {
+		"appId": "com.claude-code-tray",
+		"productName": "Claude Code Tray",
+		"directories": {
+			"output": "release"
+		},
+		"files": [
+			"dist/**/*",
+			"assets/**/*"
+		],
+		"win": {
+			"target": "portable",
+			"icon": "assets/icon.ico"
+		}
+	},
+	"pnpm": {
+		"onlyBuiltDependencies": [
+			"electron",
+			"electron-winstaller"
+		]
+	},
+	"devDependencies": {
+		"@types/node": "25.3.0",
+		"electron": "40.6.0",
+		"electron-builder": "^26.8.1",
+		"typescript": "5.9.3"
+	}
+}
