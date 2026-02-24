@@ -489,6 +489,7 @@ function generateDetailsHtml(usage: UsageData): string {
 	}
 	.accordion-trigger.open .accordion-chevron { transform: rotate(180deg); }
 	.extra-content {
+		clip-path: inset(0);
 		display: grid;
 		grid-template-rows: 0fr;
 		transition: grid-template-rows 0.25s ease;
