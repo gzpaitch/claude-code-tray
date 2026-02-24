@@ -13,6 +13,7 @@ import {
 	buildProgressBar,
 	formatTokens,
 	getModelShortName,
+	getTotalTokens,
 	readUsage,
 	type UsageData,
 	watchFiles,
@@ -84,6 +85,28 @@ function buildTooltip(usage: UsageData): string {
 	return lines.join("\n");
 }
 
+interface RateLimitBlock {
+	label: string;
+	usage: number;
+	resetTime: string;
+}
+
+function getRateLimitBlocks(rl: UsageData["rateLimit"]): RateLimitBlock[] | null {
+	if (!rl) return null;
+	return [
+		{
+			label: "Current session",
+			usage: rl.sessionUsage,
+			resetTime: rl.sessionResetTime,
+		},
+		{
+			label: "Current week (all models)",
+			usage: rl.weeklyUsage,
+			resetTime: rl.weeklyResetTime,
+		},
+	];
+}
+
 function buildContextMenu(usage: UsageData): Menu {
 	const items: Electron.MenuItemConstructorOptions[] = [
 		{ label: "Claude Code Usage", enabled: false },
@@ -91,59 +114,32 @@ function buildContextMenu(usage: UsageData): Menu {
 	];
 
 	// Rate limits
-	if (usage.rateLimit) {
+	const blocks = getRateLimitBlocks(usage.rateLimit);
+	if (blocks && usage.rateLimit) {
 		const rl = usage.rateLimit;
 		const staleTag = rl.stale ? ` (${rl.ageLabel})` : "";
 
-		// Session
-		items.push({ label: "Current session", enabled: false });
-		if (rl.sessionResetPassed) {
+		for (const block of blocks) {
+			const pct = Math.round(block.usage * 100);
+			items.push({ label: block.label, enabled: false });
 			items.push({
-				label: "  Session has reset since last update",
-				enabled: false,
-			});
-		} else {
-			const sessionPct = Math.round(rl.sessionUsage * 100);
-			items.push({
-				label: `  ${buildProgressBar(rl.sessionUsage, 20)}  ${sessionPct}%`,
+				label: `  ${buildProgressBar(block.usage, 20)}  ${pct}%`,
 				enabled: false,
 			});
 			items.push({
-				label: `  Resets ${rl.sessionResetTime}${staleTag}`,
+				label: `  Resets ${block.resetTime}${staleTag}`,
 				enabled: false,
 			});
-		}
-
-		items.push({ type: "separator" });
-
-		// Weekly
-		items.push({ label: "Current week (all models)", enabled: false });
-		if (rl.weeklyResetPassed) {
-			items.push({
-				label: "  Week has reset since last update",
-				enabled: false,
-			});
-		} else {
-			const weeklyPct = Math.round(rl.weeklyUsage * 100);
-			items.push({
-				label: `  ${buildProgressBar(rl.weeklyUsage, 20)}  ${weeklyPct}%`,
-				enabled: false,
-			});
-			items.push({
-				label: `  Resets ${rl.weeklyResetTime}${staleTag}`,
-				enabled: false,
-			});
+			items.push({ type: "separator" });
 		}
 
 		if (rl.stale) {
-			items.push({ type: "separator" });
 			items.push({
 				label: `  Data from ${rl.ageLabel} - updates when Claude Code runs`,
 				enabled: false,
 			});
+			items.push({ type: "separator" });
 		}
-
-		items.push({ type: "separator" });
 	} else {
 		items.push({ label: "Rate limits: no data yet", enabled: false });
 		items.push({ type: "separator" });
@@ -188,13 +184,8 @@ function buildContextMenu(usage: UsageData): Menu {
 	// Totals by model
 	items.push({ label: "All-time by model:", enabled: false });
 	for (const [model, data] of Object.entries(usage.modelUsage)) {
-		const total =
-			data.inputTokens +
-			data.outputTokens +
-			data.cacheReadInputTokens +
-			data.cacheCreationInputTokens;
 		items.push({
-			label: `  ${getModelShortName(model)}: ${formatTokens(total)} total tokens`,
+			label: `  ${getModelShortName(model)}: ${formatTokens(getTotalTokens(data))} total tokens`,
 			enabled: false,
 		});
 	}
@@ -224,48 +215,31 @@ function generateDetailsHtml(usage: UsageData): string {
 		return isDarkTheme ? "#6ccb5f" : "#0f7b0f";
 	};
 
-	const rateLimitSection = rl
+	const blocks = getRateLimitBlocks(rl);
+
+	const rateLimitSection = rl && blocks
 		? (() => {
-				const sessionPct = Math.round(rl.sessionUsage * 100);
-				const weeklyPct = Math.round(rl.weeklyUsage * 100);
 				const staleBadge = rl.stale
 					? `<span class="stale-badge">updated ${rl.ageLabel}</span>`
 					: `<span class="fresh-badge">updated ${rl.ageLabel}</span>`;
 
-				const sessionContent = rl.sessionResetPassed
-					? `<div class="limit-block">
-					<div class="limit-header"><span>Current session</span><span class="reset-note">reset since last update</span></div>
-				</div>`
-					: `<div class="limit-block">
+				const blocksHtml = blocks.map((block) => {
+					const pct = Math.round(block.usage * 100);
+					return `<div class="limit-block">
 					<div class="limit-header">
-						<span>Current session</span>
-						<span class="value">${sessionPct}%</span>
+						<span>${block.label}</span>
+						<span class="value">${pct}%</span>
 					</div>
 					<div class="progress-track">
-						<div class="progress-fill" style="width: ${sessionPct}%; background: ${getBarColor(sessionPct, isDark)}"></div>
+						<div class="progress-fill" style="width: ${pct}%; background: ${getBarColor(pct, isDark)}"></div>
 					</div>
-					<div class="reset-info">Resets ${rl.sessionResetTime}</div>
+					<div class="reset-info">Resets ${block.resetTime}</div>
 				</div>`;
-
-				const weeklyContent = rl.weeklyResetPassed
-					? `<div class="limit-block">
-					<div class="limit-header"><span>Current week</span><span class="reset-note">reset since last update</span></div>
-				</div>`
-					: `<div class="limit-block">
-					<div class="limit-header">
-						<span>Current week (all models)</span>
-						<span class="value">${weeklyPct}%</span>
-					</div>
-					<div class="progress-track">
-						<div class="progress-fill" style="width: ${weeklyPct}%; background: ${getBarColor(weeklyPct, isDark)}"></div>
-					</div>
-					<div class="reset-info">Resets ${rl.weeklyResetTime}</div>
-				</div>`;
+				}).join("");
 
 				return `<div class="card">
 				<div class="card-header"><h2>Rate Limits</h2>${staleBadge}</div>
-				${sessionContent}
-				${weeklyContent}
+				${blocksHtml}
 			</div>`;
 			})()
 		: `<div class="card"><h2>Rate Limits</h2><p class="muted">No data - run Claude Code to populate</p></div>`;
@@ -298,14 +272,9 @@ function generateDetailsHtml(usage: UsageData): string {
 
 	const modelsHtml = Object.entries(usage.modelUsage)
 		.map(([model, data]) => {
-			const total =
-				data.inputTokens +
-				data.outputTokens +
-				data.cacheReadInputTokens +
-				data.cacheCreationInputTokens;
 			return `<div class="stat-row">
 				<span>${getModelShortName(model)}</span>
-				<span class="value">${formatTokens(total)}</span>
+				<span class="value">${formatTokens(getTotalTokens(data))}</span>
 			</div>
 			<div class="stat-detail">
 				In: ${formatTokens(data.inputTokens)} | Out: ${formatTokens(data.outputTokens)} | Cache R: ${formatTokens(data.cacheReadInputTokens)} | Cache W: ${formatTokens(data.cacheCreationInputTokens)}
@@ -468,7 +437,7 @@ function generateDetailsHtml(usage: UsageData): string {
 		justify-content: space-between;
 		padding: 10px 16px;
 		background: var(--bg-card);
-		border: 1px solid var(--border-card);
+		border: none;
 		border-radius: 8px;
 		color: var(--text-secondary);
 		font-size: 13px;
@@ -477,10 +446,10 @@ function generateDetailsHtml(usage: UsageData): string {
 		cursor: pointer;
 		-webkit-app-region: no-drag;
 		margin-bottom: 8px;
-		transition: background 0.15s, border-color 0.15s;
+		transition: background 0.15s;
 	}
 	.accordion-trigger:hover { background: var(--bg-card-hover); }
-	.accordion-trigger.open { border-radius: 8px 8px 0 0; margin-bottom: 0; border-bottom-color: var(--divider); }
+	.accordion-trigger.open { border-radius: 8px 8px 0 0; margin-bottom: 0; }
 	.accordion-chevron {
 		width: 16px;
 		height: 16px;
@@ -505,11 +474,14 @@ function generateDetailsHtml(usage: UsageData): string {
 		border-radius: 0 0 8px 8px;
 		padding: 0 16px;
 		margin-bottom: 8px;
+		visibility: hidden;
 	}
+	.extra-content.visible .extra-content-inner { visibility: visible; }
 	.launch-actions {
 		display: flex;
 		gap: 8px;
 		margin-top: 8px;
+		margin-bottom: 12px;
 	}
 	.launch-btn {
 		flex: 1;
@@ -552,7 +524,16 @@ function generateDetailsHtml(usage: UsageData): string {
 <body>
 	<div class="titlebar"><h1>Claude Code</h1><button class="close-btn" id="closeBtn" aria-label="Close">&#x2715;</button></div>
 	${rateLimitSection}
-	${todaySection}
+	<div class="launch-actions">
+		<button class="launch-btn" id="launchClaude">
+			<img class="btn-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHNoYXBlLXJlbmRlcmluZz0iZ2VvbWV0cmljUHJlY2lzaW9uIiB0ZXh0LXJlbmRlcmluZz0iZ2VvbWV0cmljUHJlY2lzaW9uIiBpbWFnZS1yZW5kZXJpbmc9Im9wdGltaXplUXVhbGl0eSIgZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIHZpZXdCb3g9IjAgMCA1MTIgNTA5LjY0Ij48cGF0aCBmaWxsPSIjRDc3NjU1IiBkPSJNMTE1LjYxMiAwaDI4MC43NzVDNDU5Ljk3NCAwIDUxMiA1Mi4wMjYgNTEyIDExNS42MTJ2Mjc4LjQxNWMwIDYzLjU4Ny01Mi4wMjYgMTE1LjYxMi0xMTUuNjEzIDExNS42MTJIMTE1LjYxMkM1Mi4wMjYgNTA5LjYzOSAwIDQ1Ny42MTQgMCAzOTQuMDI3VjExNS42MTJDMCA1Mi4wMjYgNTIuMDI2IDAgMTE1LjYxMiAweiIvPjxwYXRoIGZpbGw9IiNGQ0YyRUUiIGZpbGwtcnVsZT0ibm9uemVybyIgZD0iTTE0Mi4yNyAzMTYuNjE5bDczLjY1NS00MS4zMjYgMS4yMzgtMy41ODktMS4yMzgtMS45OTYtMy41ODktLjAwMS0xMi4zMS0uNzU5LTQyLjA4NC0xLjEzOC0zNi40OTgtMS41MTYtMzUuMzYxLTEuODk2LTguODk3LTEuODk1LTguMzQtMTAuOTk1Ljg1OS01LjQ0NCA3LjQ4Mi01LjAzIDEwLjcxNy45MzUgMjMuNjgzIDEuNjE3IDM1LjUzNyAyLjQ1MiAyNS43ODIgMS41MTcgMzguMTkzIDMuOTY4aDYuMDY0bC44Ni0yLjQ1MS0yLjA3My0xLjUxNy0xLjYxOC0xLjUxNy0zNi43NzYtMjQuOTIyLTM5LjgxLTI2LjMzOC0yMC44NTItMTUuMTY2LTExLjI3My03LjY4My01LjY4Ny03LjIwNC0yLjQ1MS0xNS43MjEgMTAuMjM3LTExLjI3MyAxMy43NS45MzUgMy41MTMuOTM2IDEzLjkyOCAxMC43MTYgMjkuNzQ5IDIzLjAyNyAzOC44NDggMjguNjEyIDUuNjg3IDQuNzI3IDIuMjc1LTEuNjE3LjI3OC0xLjEzOC0yLjU1My00LjI3MS0yMS4xMy0zOC4xOTMtMjIuNTQ2LTM4Ljg0OC0xMC4wMzUtMTYuMTAxLTIuNjU0LTkuNjU1Yy0uOTM1LTMuOTY4LTEuNjE3LTcuMzA0LTEuNjE3LTExLjM3NGwxMS42NTItMTUuODIzIDYuNDQ1LTIuMDczIDE1LjU0NSAyLjA3MyA2LjU0NyA1LjY4NyA5LjY1NSAyMi4wOTIgMTUuNjQ2IDM0Ljc4IDI0LjI2NSA0Ny4yOTEgNy4xMDMgMTQuMDI4IDMuNzkxIDEyLjk5MiAxLjQxNiAzLjk2OCAyLjQ0OS0uMDAxdi0yLjI3NWwxLjk5Ny0yNi42NDEgMy42OS0zMi43MDcgMy41ODktNDIuMDg0IDEuMjM5LTExLjg1NCA1Ljg2My0xNC4yMDYgMTEuNjUyLTcuNjgzIDkuMDk5IDQuMzQ4IDcuNDgyIDEwLjcxNi0xLjAzNiA2LjkyNi00LjQ0OSAyOC45MTUtOC43MiA0NS4yOTQtNS42ODcgMzAuMzMxaDMuMzEzbDMuNzkyLTMuNzkxIDE1LjM0Mi0yMC4zNzIgMjUuNzgyLTMyLjIyNyAxMS4zNzQtMTIuNzg5IDEzLjI3LTE0LjEyOSA4LjUxNy02LjcyNCAxNi4xLS4wMDEgMTEuODU0IDE3LjYxNy01LjMwNyAxOC4xOTktMTYuNTgxIDIxLjAyOS0xMy43NSAxNy44MTktMTkuNzE2IDI2LjU0LTEyLjMwOSAyMS4yMzEgMS4xMzggMS42OTQgMi45MzItLjI3OCA0NC41MzYtOS40NzkgMjQuMDYyLTQuMzQ3IDI4LjcxNC00LjkyOCAxMi45OTIgNi4wNjYgMS40MTYgNi4xNjctNS4xMDYgMTIuNjEzLTMwLjcxIDcuNTgzLTM2LjAxOCA3LjIwNC01My42MzYgMTIuNjg5LS42NTcuNDguNzU4LjkzNSAyNC4xNjQgMi4yNzUgMTAuMzM3LjU1NmgyNS4zMDFsNDcuMTE0IDMuNTE0IDEyLjMwOSA4LjEzOSA3LjM4MSA5Ljk1OS0xLjIzOCA3LjU4My0xOC45NTcgOS42NTUtMjUuNTc5LTYuMDY2LTU5LjcwMi0xNC4yMDUtMjAuNDc0LTUuMTA2LTIuODMtLjAwMXYxLjY5NGwxNy4wNjEgMTYuNjgyIDMxLjI2NiAyOC4yMzMgMzkuMTUyIDM2LjM5NyAxLjk5NyA4Ljk5OS01LjAzIDcuMTAyLTUuMzA3LS43NTgtMzQuNDAxLTI1Ljg4My0xMy4yNy0xMS42NTEtMzAuMDUzLTI1LjMwMi0xLjk5Ni0uMDAxdjIuNjU0bDYuOTI2IDEwLjEzNiAzNi41NzQgNTQuOTc1IDEuODk1IDE2Ljg1OS0yLjY1MyA1LjQ4NS05LjQ3OSAzLjMxMS0xMC40MTQtMS44OTUtMjEuNDA4LTMwLjA1NC0yMi4wOTItMzMuODQ0LTE3LjgxOS0zMC4zMzEtMi4xNzMgMS4yMzgtMTAuNTE1IDExMy4yNjEtNC45MjkgNS43ODgtMTEuMzc0IDQuMzQ4LTkuNDc4LTcuMjA0LTUuMDMtMTEuNjUyIDUuMDMtMjMuMDI3IDYuMDY2LTMwLjA1MiA0LjkyOC0yMy44ODYgNC40NDktMjkuNjc0IDIuNjU0LTkuODU4LS4xNzctLjY1Ny0yLjE3My4yNzgtMjIuMzcgMzAuNzEtMzQuMDIxIDQ1Ljk3Ny0yNi45MTkgMjguODE1LTYuNDQ1IDIuNTUzLTExLjE3My01Ljc4OSAxLjAzNy0xMC4zMzcgNi4yNDMtOS4yIDM3LjI1Ny00Ny4zOTIgMjIuNDctMjkuMzcxIDE0LjUwOC0xNi45NjEtLjEwMS0yLjQ1MWgtLjg1OWwtOTguOTU0IDY0LjI1MS0xNy42MTggMi4yNzUtNy41ODMtNy4xMDMuOTM2LTExLjY1MiAzLjU4OS0zLjc5MSAyOS43NDktMjAuNDc0LS4xMDEuMTAyLjAyNC4xMDF6Ii8+PC9zdmc+" alt="Claude" />
+			<span class="btn-text">Claude Code<span class="label-sub">Normal</span></span>
+		</button>
+		<button class="launch-btn" id="launchYolo">
+			<img class="btn-icon" src="data:image/svg+xml;base64,PHN2ZyB2ZXJzaW9uPSIxLjIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTAiIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEwIj4KCTxzdHlsZT4KCQkuczAgeyBmaWxsOiAjZTIzZDNkIH0gCgkJLnMxIHsgZmlsbDogI2ZjZjJlZSB9IAoJPC9zdHlsZT4KCTxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xhc3M9InMwIiBkPSJtMTE1LjYxIDBoMjgwLjc4YzYzLjU4IDAgMTE1LjYxIDUyLjAzIDExNS42MSAxMTUuNjF2Mjc4LjQyYzAgNjMuNTgtNTIuMDMgMTE1LjYxLTExNS42MSAxMTUuNjFoLTI4MC43OGMtNjMuNTggMC0xMTUuNjEtNTIuMDMtMTE1LjYxLTExNS42MXYtMjc4LjQyYzAtNjMuNTggNTIuMDMtMTE1LjYxIDExNS42MS0xMTUuNjF6Ii8+Cgk8cGF0aCBjbGFzcz0iczEiIGQ9Im0xNDIuMjcgMzE2LjYybDczLjY2LTQxLjMzIDEuMjMtMy41OS0xLjIzLTEuOTloLTMuNTlsLTEyLjMxLTAuNzYtNDIuMDktMS4xNC0zNi41LTEuNTItMzUuMzYtMS44OS04Ljg5LTEuOS04LjM0LTEwLjk5IDAuODYtNS40OSA3LjQ4LTUuMDMgMTAuNzEgMC45NCAyMy42OSAxLjYyIDM1LjUzIDIuNDUgMjUuNzkgMS41MiAzOC4xOSAzLjk2aDYuMDZsMC44Ni0yLjQ1LTIuMDctMS41MS0xLjYyLTEuNTItMzYuNzctMjQuOTItMzkuODEtMjYuMzQtMjAuODYtMTUuMTctMTEuMjctNy42OC01LjY5LTcuMi0yLjQ1LTE1LjczIDEwLjI0LTExLjI3IDEzLjc1IDAuOTQgMy41MSAwLjkzIDEzLjkzIDEwLjcyIDI5Ljc1IDIzLjAzIDM4Ljg1IDI4LjYxIDUuNjkgNC43MiAyLjI3LTEuNjEgMC4yOC0xLjE0LTIuNTUtNC4yNy0yMS4xMy0zOC4xOS0yMi41NS0zOC44NS0xMC4wNC0xNi4xLTIuNjUtOS42NmMtMC45My0zLjk3LTEuNjItNy4zLTEuNjItMTEuMzdsMTEuNjYtMTUuODMgNi40NC0yLjA3IDE1LjU1IDIuMDcgNi41NCA1LjY5IDkuNjYgMjIuMDkgMTUuNjQgMzQuNzggMjQuMjcgNDcuMjkgNy4xIDE0LjAzIDMuNzkgMTIuOTkgMS40MiAzLjk3aDIuNDV2LTIuMjdsMS45OS0yNi42NCAzLjY5LTMyLjcxIDMuNTktNDIuMDkgMS4yNC0xMS44NSA1Ljg3LTE0LjIxIDExLjY1LTcuNjggOS4xIDQuMzUgNy40OCAxMC43Mi0xLjA0IDYuOTItNC40NSAyOC45Mi04LjcyIDQ1LjI5LTUuNjggMzAuMzNoMy4zMWwzLjc5LTMuNzkgMTUuMzQtMjAuMzcgMjUuNzgtMzIuMjMgMTEuMzgtMTIuNzkgMTMuMjctMTQuMTMgOC41Mi02LjcyaDE2LjFsMTEuODUgMTcuNjItNS4zMSAxOC4xOS0xNi41OCAyMS4wMy0xMy43NSAxNy44Mi0xOS43MSAyNi41NC0xMi4zMSAyMS4yMyAxLjEzIDEuNyAyLjk0LTAuMjggNDQuNTMtOS40OCAyNC4wNi00LjM1IDI4LjcyLTQuOTMgMTIuOTkgNi4wNyAxLjQyIDYuMTctNS4xMSAxMi42MS0zMC43MSA3LjU4LTM2LjAyIDcuMjEtNTMuNjMgMTIuNjktMC42NiAwLjQ4IDAuNzYgMC45MyAyNC4xNiAyLjI4IDEwLjM0IDAuNTVoMjUuM2w0Ny4xMSAzLjUyIDEyLjMxIDguMTQgNy4zOCA5Ljk2LTEuMjMgNy41OC0xOC45NiA5LjY1LTI1LjU4LTYuMDYtNTkuNy0xNC4yMS0yMC40OC01LjFoLTIuODN2MS42OWwxNy4wNiAxNi42OCAzMS4yNyAyOC4yMyAzOS4xNSAzNi40IDIgOS01LjAzIDcuMS01LjMxLTAuNzYtMzQuNC0yNS44OC0xMy4yNy0xMS42NS0zMC4wNS0yNS4zaC0ydjIuNjVsNi45MyAxMC4xNCAzNi41NyA1NC45NyAxLjkgMTYuODYtMi42NiA1LjQ5LTkuNDcgMy4zMS0xMC40Mi0xLjktMjEuNDEtMzAuMDUtMjIuMDktMzMuODUtMTcuODItMzAuMzMtMi4xNyAxLjI0LTEwLjUyIDExMy4yNi00LjkyIDUuNzktMTEuMzggNC4zNS05LjQ4LTcuMjEtNS4wMy0xMS42NSA1LjAzLTIzLjAyIDYuMDctMzAuMDYgNC45My0yMy44OCA0LjQ1LTI5LjY4IDIuNjUtOS44NS0wLjE4LTAuNjYtMi4xNyAwLjI4LTIyLjM3IDMwLjcxLTM0LjAyIDQ1Ljk3LTI2LjkyIDI4LjgyLTYuNDQgMi41NS0xMS4xOC01Ljc5IDEuMDQtMTAuMzMgNi4yNC05LjIgMzcuMjYtNDcuNCAyMi40Ny0yOS4zNyAxNC41MS0xNi45Ni0wLjEtMi40NWgtMC44NmwtOTguOTYgNjQuMjUtMTcuNjEgMi4yOC03LjU5LTcuMTEgMC45NC0xMS42NSAzLjU5LTMuNzkgMjkuNzUtMjAuNDctMC4xIDAuMXoiLz4KPC9zdmc+" alt="Claude YOLO" />
+			<span class="btn-text">Claude Code<span class="label-sub">YOLO</span></span>
+		</button>
+	</div>
 	<button class="accordion-trigger" id="accordionBtn" aria-expanded="false" aria-controls="extraContent">
 		<span>Detailed Stats</span>
 		<svg class="accordion-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6l4 4 4-4"/></svg>
@@ -560,6 +541,7 @@ function generateDetailsHtml(usage: UsageData): string {
 	<div class="extra-content" id="extraContent">
 		<div class="extra-content-inner">
 		<div style="padding: 0 0 12px;">
+		${todaySection}
 		<div class="card" style="border:none;padding:8px 0 0;background:transparent;">
 			<h2 style="padding-left: 8px;">Last 7 Days</h2>
 			<table>
@@ -580,16 +562,6 @@ function generateDetailsHtml(usage: UsageData): string {
 		<div class="footer">Stats last computed ${usage.lastComputedDate}</div>
 		</div>
 		</div>
-	</div>
-	<div class="launch-actions">
-		<button class="launch-btn" id="launchClaude">
-			<img class="btn-icon" src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHNoYXBlLXJlbmRlcmluZz0iZ2VvbWV0cmljUHJlY2lzaW9uIiB0ZXh0LXJlbmRlcmluZz0iZ2VvbWV0cmljUHJlY2lzaW9uIiBpbWFnZS1yZW5kZXJpbmc9Im9wdGltaXplUXVhbGl0eSIgZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiIHZpZXdCb3g9IjAgMCA1MTIgNTA5LjY0Ij48cGF0aCBmaWxsPSIjRDc3NjU1IiBkPSJNMTE1LjYxMiAwaDI4MC43NzVDNDU5Ljk3NCAwIDUxMiA1Mi4wMjYgNTEyIDExNS42MTJ2Mjc4LjQxNWMwIDYzLjU4Ny01Mi4wMjYgMTE1LjYxMi0xMTUuNjEzIDExNS42MTJIMTE1LjYxMkM1Mi4wMjYgNTA5LjYzOSAwIDQ1Ny42MTQgMCAzOTQuMDI3VjExNS42MTJDMCA1Mi4wMjYgNTIuMDI2IDAgMTE1LjYxMiAweiIvPjxwYXRoIGZpbGw9IiNGQ0YyRUUiIGZpbGwtcnVsZT0ibm9uemVybyIgZD0iTTE0Mi4yNyAzMTYuNjE5bDczLjY1NS00MS4zMjYgMS4yMzgtMy41ODktMS4yMzgtMS45OTYtMy41ODktLjAwMS0xMi4zMS0uNzU5LTQyLjA4NC0xLjEzOC0zNi40OTgtMS41MTYtMzUuMzYxLTEuODk2LTguODk3LTEuODk1LTguMzQtMTAuOTk1Ljg1OS01LjQ4NCA3LjQ4Mi01LjAzIDEwLjcxNy45MzUgMjMuNjgzIDEuNjE3IDM1LjUzNyAyLjQ1MiAyNS43ODIgMS41MTcgMzguMTkzIDMuOTY4aDYuMDY0bC44Ni0yLjQ1MS0yLjA3My0xLjUxNy0xLjYxOC0xLjUxNy0zNi43NzYtMjQuOTIyLTM5LjgxLTI2LjMzOC0yMC44NTItMTUuMTY2LTExLjI3My03LjY4My01LjY4Ny03LjIwNC0yLjQ1MS0xNS43MjEgMTAuMjM3LTExLjI3MyAxMy43NS45MzUgMy41MTMuOTM2IDEzLjkyOCAxMC43MTYgMjkuNzQ5IDIzLjAyNyAzOC44NDggMjguNjEyIDUuNjg3IDQuNzI3IDIuMjc1LTEuNjE3LjI3OC0xLjEzOC0yLjU1My00LjI3MS0yMS4xMy0zOC4xOTMtMjIuNTQ2LTM4Ljg0OC0xMC4wMzUtMTYuMTAxLTIuNjU0LTkuNjU1Yy0uOTM1LTMuOTY4LTEuNjE3LTcuMzA0LTEuNjE3LTExLjM3NGwxMS42NTItMTUuODIzIDYuNDQ1LTIuMDczIDE1LjU0NSAyLjA3MyA2LjU0NyA1LjY4NyA5LjY1NSAyMi4wOTIgMTUuNjQ2IDM0Ljc4IDI0LjI2NSA0Ny4yOTEgNy4xMDMgMTQuMDI4IDMuNzkxIDEyLjk5MiAxLjQxNiAzLjk2OCAyLjQ0OS0uMDAxdi0yLjI3NWwxLjk5Ny0yNi42NDEgMy42OS0zMi43MDcgMy41ODktNDIuMDg0IDEuMjM5LTExLjg1NCA1Ljg2My0xNC4yMDYgMTEuNjUyLTcuNjgzIDkuMDk5IDQuMzQ4IDcuNDgyIDEwLjcxNi0xLjAzNiA2LjkyNi00LjQ0OSAyOC45MTUtOC43MiA0NS4yOTQtNS42ODcgMzAuMzMxaDMuMzEzbDMuNzkyLTMuNzkxIDE1LjM0Mi0yMC4zNzIgMjUuNzgyLTMyLjIyNyAxMS4zNzQtMTIuNzg5IDEzLjI3LTE0LjEyOSA4LjUxNy02LjcyNCAxNi4xLS4wMDEgMTEuODU0IDE3LjYxNy01LjMwNyAxOC4xOTktMTYuNTgxIDIxLjAyOS0xMy43NSAxNy44MTktMTkuNzE2IDI2LjU0LTEyLjMwOSAyMS4yMzEgMS4xMzggMS42OTQgMi45MzItLjI3OCA0NC41MzYtOS40NzkgMjQuMDYyLTQuMzQ3IDI4LjcxNC00LjkyOCAxMi45OTIgNi4wNjYgMS40MTYgNi4xNjctNS4xMDYgMTIuNjEzLTMwLjcxIDcuNTgzLTM2LjAxOCA3LjIwNC01My42MzYgMTIuNjg5LS42NTcuNDguNzU4LjkzNSAyNC4xNjQgMi4yNzUgMTAuMzM3LjU1NmgyNS4zMDFsNDcuMTE0IDMuNTE0IDEyLjMwOSA4LjEzOSA3LjM4MSA5Ljk1OS0xLjIzOCA3LjU4My0xOC45NTcgOS42NTUtMjUuNTc5LTYuMDY2LTU5LjcwMi0xNC4yMDUtMjAuNDc0LTUuMTA2LTIuODMtLjAwMXYxLjY5NGwxNy4wNjEgMTYuNjgyIDMxLjI2NiAyOC4yMzMgMzkuMTUyIDM2LjM5NyAxLjk5NyA4Ljk5OS01LjAzIDcuMTAyLTUuMzA3LS43NTgtMzQuNDAxLTI1Ljg4My0xMy4yNy0xMS42NTEtMzAuMDUzLTI1LjMwMi0xLjk5Ni0uMDAxdjIuNjU0bDYuOTI2IDEwLjEzNiAzNi41NzQgNTQuOTc1IDEuODk1IDE2Ljg1OS0yLjY1MyA1LjQ4NS05LjQ3OSAzLjMxMS0xMC40MTQtMS44OTUtMjEuNDA4LTMwLjA1NC0yMi4wOTItMzMuODQ0LTE3LjgxOS0zMC4zMzEtMi4xNzMgMS4yMzgtMTAuNTE1IDExMy4yNjEtNC45MjkgNS43ODgtMTEuMzc0IDQuMzQ4LTkuNDc4LTcuMjA0LTUuMDMtMTEuNjUyIDUuMDMtMjMuMDI3IDYuMDY2LTMwLjA1MiA0LjkyOC0yMy44ODYgNC40NDktMjkuNjc0IDIuNjU0LTkuODU4LS4xNzctLjY1Ny0yLjE3My4yNzgtMjIuMzcgMzAuNzEtMzQuMDIxIDQ1Ljk3Ny0yNi45MTkgMjguODE1LTYuNDQ1IDIuNTUzLTExLjE3My01Ljc4OSAxLjAzNy0xMC4zMzcgNi4yNDMtOS4yIDM3LjI1Ny00Ny4zOTIgMjIuNDctMjkuMzcxIDE0LjUwOC0xNi45NjEtLjEwMS0yLjQ1MWgtLjg1OWwtOTguOTU0IDY0LjI1MS0xNy42MTggMi4yNzUtNy41ODMtNy4xMDMuOTM2LTExLjY1MiAzLjU4OS0zLjc5MSAyOS43NDktMjAuNDc0LS4xMDEuMTAyLjAyNC4xMDF6Ii8+PC9zdmc+" alt="Claude" />
-			<span class="btn-text">Claude Code<span class="label-sub">Normal</span></span>
-		</button>
-		<button class="launch-btn" id="launchYolo">
-			<img class="btn-icon" src="data:image/svg+xml;base64,PHN2ZyB2ZXJzaW9uPSIxLjIiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTAiIHdpZHRoPSI1MTIiIGhlaWdodD0iNTEwIj4KCTxzdHlsZT4KCQkuczAgeyBmaWxsOiAjZTIzZDNkIH0gCgkJLnMxIHsgZmlsbDogI2ZjZjJlZSB9IAoJPC9zdHlsZT4KCTxwYXRoIGZpbGwtcnVsZT0iZXZlbm9kZCIgY2xhc3M9InMwIiBkPSJtMTE1LjYxIDBoMjgwLjc4YzYzLjU4IDAgMTE1LjYxIDUyLjAzIDExNS42MSAxMTUuNjF2Mjc4LjQyYzAgNjMuNTgtNTIuMDMgMTE1LjYxLTExNS42MSAxMTUuNjFoLTI4MC43OGMtNjMuNTggMC0xMTUuNjEtNTIuMDMtMTE1LjYxLTExNS42MXYtMjc4LjQyYzAtNjMuNTggNTIuMDMtMTE1LjYxIDExNS42MS0xMTUuNjF6Ii8+Cgk8cGF0aCBjbGFzcz0iczEiIGQ9Im0xNDIuMjcgMzE2LjYybDczLjY2LTQxLjMzIDEuMjMtMy41OS0xLjIzLTEuOTloLTMuNTlsLTEyLjMxLTAuNzYtNDIuMDktMS4xNC0zNi41LTEuNTItMzUuMzYtMS44OS04Ljg5LTEuOS04LjM0LTEwLjk5IDAuODYtNS40OSA3LjQ4LTUuMDMgMTAuNzEgMC45NCAyMy42OSAxLjYyIDM1LjUzIDIuNDUgMjUuNzkgMS41MiAzOC4xOSAzLjk2aDYuMDZsMC44Ni0yLjQ1LTIuMDctMS41MS0xLjYyLTEuNTItMzYuNzctMjQuOTItMzkuODEtMjYuMzQtMjAuODYtMTUuMTctMTEuMjctNy42OC01LjY5LTcuMi0yLjQ1LTE1LjczIDEwLjI0LTExLjI3IDEzLjc1IDAuOTQgMy41MSAwLjkzIDEzLjkzIDEwLjcyIDI5Ljc1IDIzLjAzIDM4Ljg1IDI4LjYxIDUuNjkgNC43MiAyLjI3LTEuNjEgMC4yOC0xLjE0LTIuNTUtNC4yNy0yMS4xMy0zOC4xOS0yMi41NS0zOC44NS0xMC4wNC0xNi4xLTIuNjUtOS42NmMtMC45My0zLjk3LTEuNjItNy4zLTEuNjItMTEuMzdsMTEuNjYtMTUuODMgNi40NC0yLjA3IDE1LjU1IDIuMDcgNi41NCA1LjY5IDkuNjYgMjIuMDkgMTUuNjQgMzQuNzggMjQuMjcgNDcuMjkgNy4xIDE0LjAzIDMuNzkgMTIuOTkgMS40MiAzLjk3aDIuNDV2LTIuMjdsMS45OS0yNi42NCAzLjY5LTMyLjcxIDMuNTktNDIuMDkgMS4yNC0xMS44NSA1Ljg3LTE0LjIxIDExLjY1LTcuNjggOS4xIDQuMzUgNy40OCAxMC43Mi0xLjA0IDYuOTItNC40NSAyOC45Mi04LjcyIDQ1LjI5LTUuNjggMzAuMzNoMy4zMWwzLjc5LTMuNzkgMTUuMzQtMjAuMzcgMjUuNzgtMzIuMjMgMTEuMzgtMTIuNzkgMTMuMjctMTQuMTMgOC41Mi02LjcyaDE2LjFsMTEuODUgMTcuNjItNS4zMSAxOC4xOS0xNi41OCAyMS4wMy0xMy43NSAxNy44Mi0xOS43MSAyNi41NC0xMi4zMSAyMS4yMyAxLjEzIDEuNyAyLjk0LTAuMjggNDQuNTMtOS40OCAyNC4wNi00LjM1IDI4LjcyLTQuOTMgMTIuOTkgNi4wNyAxLjQyIDYuMTctNS4xMSAxMi42MS0zMC43MSA3LjU4LTM2LjAyIDcuMjEtNTMuNjMgMTIuNjktMC42NiAwLjQ4IDAuNzYgMC45MyAyNC4xNiAyLjI4IDEwLjM0IDAuNTVoMjUuM2w0Ny4xMSAzLjUyIDEyLjMxIDguMTQgNy4zOCA5Ljk2LTEuMjMgNy41OC0xOC45NiA5LjY1LTI1LjU4LTYuMDYtNTkuNy0xNC4yMS0yMC40OC01LjFoLTIuODN2MS42OWwxNy4wNiAxNi42OCAzMS4yNyAyOC4yMyAzOS4xNSAzNi40IDIgOS01LjAzIDcuMS01LjMxLTAuNzYtMzQuNC0yNS44OC0xMy4yNy0xMS42NS0zMC4wNS0yNS4zaC0ydjIuNjVsNi45MyAxMC4xNCAzNi41NyA1NC45NyAxLjkgMTYuODYtMi42NiA1LjQ5LTkuNDcgMy4zMS0xMC40Mi0xLjktMjEuNDEtMzAuMDUtMjIuMDktMzMuODUtMTcuODItMzAuMzMtMi4xNyAxLjI0LTEwLjUyIDExMy4yNi00LjkyIDUuNzktMTEuMzggNC4zNS05LjQ4LTcuMjEtNS4wMy0xMS42NSA1LjAzLTIzLjAyIDYuMDctMzAuMDYgNC45My0yMy44OCA0LjQ1LTI5LjY4IDIuNjUtOS44NS0wLjE4LTAuNjYtMi4xNyAwLjI4LTIyLjM3IDMwLjcxLTM0LjAyIDQ1Ljk3LTI2LjkyIDI4LjgyLTYuNDQgMi41NS0xMS4xOC01Ljc5IDEuMDQtMTAuMzMgNi4yNC05LjIgMzcuMjYtNDcuNCAyMi40Ny0yOS4zNyAxNC41MS0xNi45Ni0wLjEtMi40NWgtMC44NmwtOTguOTYgNjQuMjUtMTcuNjEgMi4yOC03LjU5LTcuMTEgMC45NC0xMS42NSAzLjU5LTMuNzkgMjkuNzUtMjAuNDctMC4xIDAuMXoiLz4KPC9zdmc+" alt="Claude YOLO" />
-			<span class="btn-text">Claude Code<span class="label-sub">YOLO</span></span>
-		</button>
 	</div>
 	<script>
 		document.getElementById('closeBtn').addEventListener('click', () => window.close());
@@ -699,14 +671,22 @@ function showDetailsWindow(usage: UsageData) {
 	});
 }
 
-function refreshTray() {
-	if (!tray) return;
+function safeReadUsage(): UsageData | null {
 	try {
-		const usage = readUsage();
-		tray.setToolTip(buildTooltip(usage));
-		tray.setContextMenu(buildContextMenu(usage));
+		return readUsage();
 	} catch (err) {
 		console.error("Failed to read usage:", err);
+		return null;
+	}
+}
+
+function refreshTray() {
+	if (!tray) return;
+	const usage = safeReadUsage();
+	if (usage) {
+		tray.setToolTip(buildTooltip(usage));
+		tray.setContextMenu(buildContextMenu(usage));
+	} else {
 		tray.setToolTip("Claude Code Usage - Error reading stats");
 	}
 }
@@ -718,12 +698,8 @@ app.whenReady().then(() => {
 	refreshTray();
 
 	tray.on("click", () => {
-		try {
-			const usage = readUsage();
-			showDetailsWindow(usage);
-		} catch {
-			// fallback to context menu
-		}
+		const usage = safeReadUsage();
+		if (usage) showDetailsWindow(usage);
 	});
 
 	// Watch for file changes from Claude Code sessions

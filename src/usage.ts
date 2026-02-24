@@ -14,7 +14,7 @@ interface DailyModelTokens {
 	tokensByModel: Record<string, number>;
 }
 
-interface ModelUsage {
+export interface ModelUsage {
 	inputTokens: number;
 	outputTokens: number;
 	cacheReadInputTokens: number;
@@ -97,8 +97,8 @@ function parseRateLimit(raw: string): RateLimitData | null {
 		const nowSec = Math.floor(now / 1000);
 
 		return {
-			sessionUsage: data.session5h,
-			weeklyUsage: data.weekly7d,
+			sessionUsage: data.session5h / 100,
+			weeklyUsage: data.weekly7d / 100,
 			sessionResetTime: formatResetTime(data.reset5h),
 			weeklyResetTime: formatResetTime(data.reset7d),
 			sessionResetPassed: nowSec > data.reset5h,
@@ -206,4 +206,13 @@ export function buildProgressBar(ratio: number, width: number = 25): string {
 	const filled = Math.round(ratio * width);
 	const empty = width - filled;
 	return "\u2588".repeat(filled) + "\u2591".repeat(empty);
+}
+
+export function getTotalTokens(data: ModelUsage): number {
+	return (
+		data.inputTokens +
+		data.outputTokens +
+		data.cacheReadInputTokens +
+		data.cacheCreationInputTokens
+	);
 }
