@@ -559,15 +559,15 @@ function generateDetailsHtml(usage: UsageData): string {
 	</button>
 	<div class="extra-content" id="extraContent">
 		<div class="extra-content-inner">
-		<div style="padding: 14px 0 12px;">
-		<div class="card" style="border:none;padding:0;margin-bottom:0;background:transparent;">
+		<div style="padding: 0 0 12px;">
+		<div class="card" style="border:none;padding:8px 0 0;background:transparent;">
 			<h2 style="padding-left: 8px;">Last 7 Days</h2>
 			<table>
 				<tr><th>Date</th><th>Msgs</th><th>Sessions</th><th>Tools</th></tr>
 				${last7Html}
 			</table>
 		</div>
-		<div class="card" style="border:none;padding:14px 0 0;background:transparent;">
+		<div class="card" style="border:none;padding:8px 0 0;background:transparent;">
 			<h2 style="padding-left: 8px;">All-time by Model</h2>
 			<div style="padding: 0 8px;">${modelsHtml}</div>
 		</div>
