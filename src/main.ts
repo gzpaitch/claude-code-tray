@@ -272,7 +272,7 @@ function generateDetailsHtml(usage: UsageData): string {
 			? (() => {
 					const isLive = rl.source === "oauth";
 					const staleBadge = isLive
-						? `<span class="fresh-badge">live</span>`
+						? `<span class="fresh-badge">LIVE</span>`
 						: rl.stale
 							? `<span class="stale-badge">cached ${rl.ageLabel}</span>`
 							: `<span class="fresh-badge">cached ${rl.ageLabel}</span>`;
@@ -382,16 +382,24 @@ function generateDetailsHtml(usage: UsageData): string {
 	}
 
 	* { margin: 0; padding: 0; box-sizing: border-box; }
+	html, body {
+		background: transparent;
+		height: 100%;
+	}
 	body {
 		font-family: 'Segoe UI Variable', 'Segoe UI', system-ui, sans-serif;
-		background: transparent;
 		color: var(--text-primary);
-		padding: 16px;
 		user-select: none;
-		-webkit-app-region: no-drag;
 		overflow-y: auto;
 		font-size: 13px;
 		line-height: 1.4;
+	}
+	.wrapper {
+		background: var(--bg-solid);
+		border-radius: 20px 20px 0 0;
+		padding: 16px;
+		min-height: 100vh;
+		-webkit-app-region: no-drag;
 	}
 	body::-webkit-scrollbar { width: 10px; }
 	body::-webkit-scrollbar-track { background: transparent; }
@@ -578,6 +586,7 @@ function generateDetailsHtml(usage: UsageData): string {
 </style>
 </head>
 <body>
+<div class="wrapper">
 	<div class="titlebar"><h1>Claude Code</h1><button class="close-btn" id="closeBtn" aria-label="Close">&#x2715;</button></div>
 	${rateLimitSection}
 	<div class="launch-actions">
@@ -634,20 +643,25 @@ function generateDetailsHtml(usage: UsageData): string {
 			console.log('__resize:' + (visible ? EXPANDED_H : COLLAPSED_H));
 		});
 	</script>
+</div>
 </body>
 </html>`;
 }
 
 function showDetailsWindow(usage: UsageData) {
+	const html = generateDetailsHtml(usage);
+
 	if (win && !win.isDestroyed()) {
-		const html = generateDetailsHtml(usage);
+		win.webContents.once("did-finish-load", () => {
+			if (win && !win.isDestroyed()) {
+				win.show();
+				win.focus();
+			}
+		});
 		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-		win.show();
-		win.focus();
 		return;
 	}
 
-	const isDark = nativeTheme.shouldUseDarkColors;
 	const winWidth = 400;
 	const winHeight = 420;
 
@@ -684,19 +698,24 @@ function showDetailsWindow(usage: UsageData) {
 		resizable: false,
 		movable: false,
 		frame: false,
-		transparent: false,
 		skipTaskbar: true,
 		alwaysOnTop: true,
 		roundedCorners: true,
-		backgroundColor: isDark ? "#202020" : "#f3f3f3",
-		backgroundMaterial: "mica",
+		transparent: true,
+		hasShadow: false,
+		show: false,
 		webPreferences: {
 			nodeIntegration: false,
 			contextIsolation: true,
 		},
 	});
 
-	const html = generateDetailsHtml(usage);
+	win.webContents.once("did-finish-load", () => {
+		if (win && !win.isDestroyed()) {
+			win.show();
+			win.focus();
+		}
+	});
 	win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
 
 	win.webContents.on("console-message", (e) => {
