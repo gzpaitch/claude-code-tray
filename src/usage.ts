@@ -47,10 +47,20 @@ export interface RateLimitData {
 	weeklyUsage: number; // 0-1
 	sessionResetTime: string;
 	weeklyResetTime: string;
+	sessionResetEpoch: number; // ms
+	weeklyResetEpoch: number; // ms
 	sessionResetPassed: boolean;
 	weeklyResetPassed: boolean;
 	ageLabel: string; // human readable age
 	stale: boolean;
+	source: "oauth" | "cache";
+	opusUsage?: number; // 0-1, 7-day Opus
+	opusResetTime?: string;
+	opusResetEpoch?: number; // ms
+	sonnetUsage?: number; // 0-1, 7-day Sonnet
+	sonnetResetTime?: string;
+	sonnetResetEpoch?: number; // ms
+	subscriptionType?: string; // "pro", "max", etc.
 }
 
 export interface UsageData {
@@ -101,10 +111,13 @@ function parseRateLimit(raw: string): RateLimitData | null {
 			weeklyUsage: data.weekly7d / 100,
 			sessionResetTime: formatResetTime(data.reset5h),
 			weeklyResetTime: formatResetTime(data.reset7d),
+			sessionResetEpoch: data.reset5h * 1000,
+			weeklyResetEpoch: data.reset7d * 1000,
 			sessionResetPassed: nowSec > data.reset5h,
 			weeklyResetPassed: nowSec > data.reset7d,
 			ageLabel: formatAge(ageMs),
 			stale: ageMs > 5 * 60 * 1000, // 5 min
+			source: "cache",
 		};
 	} catch {
 		return null;

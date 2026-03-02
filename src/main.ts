@@ -9,6 +9,7 @@ import {
 	screen,
 	Tray,
 } from "electron";
+import { fetchOAuthUsage } from "./oauth-usage";
 import {
 	buildProgressBar,
 	formatTokens,
@@ -22,6 +23,12 @@ import {
 let tray: Tray | null = null;
 let win: BrowserWindow | null = null;
 let refreshInterval: ReturnType<typeof setInterval> | null = null;
+let cachedOAuthRateLimit: UsageData["rateLimit"] = null;
+
+async function refreshOAuthUsage(): Promise<void> {
+	const oauth = await fetchOAuthUsage();
+	if (oauth) cachedOAuthRateLimit = oauth;
+}
 
 function createTrayIcon(): Electron.NativeImage {
 	const iconPath = path.join(__dirname, "..", "assets", "tray-icon.png");
@@ -61,7 +68,9 @@ function createTrayIcon(): Electron.NativeImage {
 }
 
 function buildTooltip(usage: UsageData): string {
-	const lines = ["Claude Code Usage"];
+	const sub = usage.rateLimit?.subscriptionType;
+	const title = sub ? `Claude Code (${sub})` : "Claude Code Usage";
+	const lines = [title];
 
 	if (usage.rateLimit) {
 		const rl = usage.rateLimit;
@@ -71,7 +80,8 @@ function buildTooltip(usage: UsageData): string {
 		const weeklyPct = rl.weeklyResetPassed
 			? "reset"
 			: `${Math.round(rl.weeklyUsage * 100)}%`;
-		lines.push(`Session: ${sessionPct} | Week: ${weeklyPct} (${rl.ageLabel})`);
+		const src = rl.source === "oauth" ? "live" : rl.ageLabel;
+		lines.push(`Session: ${sessionPct} | Week: ${weeklyPct} (${src})`);
 	}
 
 	if (usage.today) {
@@ -89,22 +99,58 @@ interface RateLimitBlock {
 	label: string;
 	usage: number;
 	resetTime: string;
+	resetEpoch: number; // ms
 }
 
-function getRateLimitBlocks(rl: UsageData["rateLimit"]): RateLimitBlock[] | null {
+function formatTimeUntil(epochMs: number): string {
+	const diff = epochMs - Date.now();
+	if (diff <= 0) return "now";
+	const mins = Math.floor(diff / 60_000);
+	if (mins < 60) return `${mins}m`;
+	const hours = Math.floor(mins / 60);
+	const remainMins = mins % 60;
+	if (hours < 24)
+		return remainMins > 0 ? `${hours}h ${remainMins}m` : `${hours}h`;
+	const days = Math.floor(hours / 24);
+	const remainHours = hours % 24;
+	return remainHours > 0 ? `${days}d ${remainHours}h` : `${days}d`;
+}
+
+function getRateLimitBlocks(
+	rl: UsageData["rateLimit"],
+): RateLimitBlock[] | null {
 	if (!rl) return null;
-	return [
+	const blocks: RateLimitBlock[] = [
 		{
 			label: "Current session",
 			usage: rl.sessionUsage,
 			resetTime: rl.sessionResetTime,
+			resetEpoch: rl.sessionResetEpoch,
 		},
 		{
 			label: "Current week (all models)",
 			usage: rl.weeklyUsage,
 			resetTime: rl.weeklyResetTime,
+			resetEpoch: rl.weeklyResetEpoch,
 		},
 	];
+	if (rl.opusUsage != null && rl.opusResetTime && rl.opusResetEpoch) {
+		blocks.push({
+			label: "Current week (Opus)",
+			usage: rl.opusUsage,
+			resetTime: rl.opusResetTime,
+			resetEpoch: rl.opusResetEpoch,
+		});
+	}
+	if (rl.sonnetUsage != null && rl.sonnetResetTime && rl.sonnetResetEpoch) {
+		blocks.push({
+			label: "Current week (Sonnet)",
+			usage: rl.sonnetUsage,
+			resetTime: rl.sonnetResetTime,
+			resetEpoch: rl.sonnetResetEpoch,
+		});
+	}
+	return blocks;
 }
 
 function buildContextMenu(usage: UsageData): Menu {
@@ -126,8 +172,12 @@ function buildContextMenu(usage: UsageData): Menu {
 				label: `  ${buildProgressBar(block.usage, 20)}  ${pct}%`,
 				enabled: false,
 			});
+			const countdown =
+				block.resetEpoch > Date.now()
+					? ` (in ${formatTimeUntil(block.resetEpoch)})`
+					: "";
 			items.push({
-				label: `  Resets ${block.resetTime}${staleTag}`,
+				label: `  Resets ${block.resetTime}${countdown}${staleTag}`,
 				enabled: false,
 			});
 			items.push({ type: "separator" });
@@ -217,15 +267,20 @@ function generateDetailsHtml(usage: UsageData): string {
 
 	const blocks = getRateLimitBlocks(rl);
 
-	const rateLimitSection = rl && blocks
-		? (() => {
-				const staleBadge = rl.stale
-					? `<span class="stale-badge">updated ${rl.ageLabel}</span>`
-					: `<span class="fresh-badge">updated ${rl.ageLabel}</span>`;
+	const rateLimitSection =
+		rl && blocks
+			? (() => {
+					const isLive = rl.source === "oauth";
+					const staleBadge = isLive
+						? `<span class="fresh-badge">live</span>`
+						: rl.stale
+							? `<span class="stale-badge">cached ${rl.ageLabel}</span>`
+							: `<span class="fresh-badge">cached ${rl.ageLabel}</span>`;
 
-				const blocksHtml = blocks.map((block) => {
-					const pct = Math.round(block.usage * 100);
-					return `<div class="limit-block">
+					const blocksHtml = blocks
+						.map((block) => {
+							const pct = Math.round(block.usage * 100);
+							return `<div class="limit-block">
 					<div class="limit-header">
 						<span>${block.label}</span>
 						<span class="value">${pct}%</span>
@@ -233,16 +288,17 @@ function generateDetailsHtml(usage: UsageData): string {
 					<div class="progress-track">
 						<div class="progress-fill" style="width: ${pct}%; background: ${getBarColor(pct, isDark)}"></div>
 					</div>
-					<div class="reset-info">Resets ${block.resetTime}</div>
+					<div class="reset-info">Resets ${block.resetTime}${block.resetEpoch > Date.now() ? ` (in ${formatTimeUntil(block.resetEpoch)})` : ""}</div>
 				</div>`;
-				}).join("");
+						})
+						.join("");
 
-				return `<div class="card">
+					return `<div class="card">
 				<div class="card-header"><h2>Rate Limits</h2>${staleBadge}</div>
 				${blocksHtml}
 			</div>`;
-			})()
-		: `<div class="card"><h2>Rate Limits</h2><p class="muted">No data - run Claude Code to populate</p></div>`;
+				})()
+			: `<div class="card"><h2>Rate Limits</h2><p class="muted">No data - run Claude Code to populate</p></div>`;
 
 	const todaySection = usage.today
 		? `<div class="card">
@@ -684,6 +740,10 @@ function refreshTray() {
 	if (!tray) return;
 	const usage = safeReadUsage();
 	if (usage) {
+		// Prefer OAuth live data over file cache for rate limits
+		if (cachedOAuthRateLimit) {
+			usage.rateLimit = cachedOAuthRateLimit;
+		}
 		tray.setToolTip(buildTooltip(usage));
 		tray.setContextMenu(buildContextMenu(usage));
 	} else {
@@ -691,15 +751,21 @@ function refreshTray() {
 	}
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
 	if (process.platform === "darwin") app.dock?.hide();
 
 	tray = new Tray(createTrayIcon());
+
+	// Fetch live OAuth usage on startup
+	await refreshOAuthUsage();
 	refreshTray();
 
 	tray.on("click", () => {
 		const usage = safeReadUsage();
-		if (usage) showDetailsWindow(usage);
+		if (usage) {
+			if (cachedOAuthRateLimit) usage.rateLimit = cachedOAuthRateLimit;
+			showDetailsWindow(usage);
+		}
 	});
 
 	// Watch for file changes from Claude Code sessions
@@ -708,7 +774,11 @@ app.whenReady().then(() => {
 		refreshTray();
 	});
 
-	// Also poll every 30 seconds to update age labels
+	// Poll OAuth every 60s for live data, refresh tray every 30s for age labels
+	setInterval(async () => {
+		await refreshOAuthUsage();
+		refreshTray();
+	}, 60_000);
 	refreshInterval = setInterval(refreshTray, 30_000);
 });
 
