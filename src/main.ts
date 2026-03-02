@@ -620,7 +620,7 @@ function generateDetailsHtml(usage: UsageData): string {
 		</div>
 	</div>
 	<script>
-		document.getElementById('closeBtn').addEventListener('click', () => window.close());
+		document.getElementById('closeBtn').addEventListener('click', () => console.log('__hide'));
 		document.getElementById('launchClaude').addEventListener('click', () => console.log('__launch:claude'));
 		document.getElementById('launchYolo').addEventListener('click', () => console.log('__launch:claude-yolo'));
 		const btn = document.getElementById('accordionBtn');
@@ -640,6 +640,9 @@ function generateDetailsHtml(usage: UsageData): string {
 
 function showDetailsWindow(usage: UsageData) {
 	if (win && !win.isDestroyed()) {
+		const html = generateDetailsHtml(usage);
+		win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+		win.show();
 		win.focus();
 		return;
 	}
@@ -679,6 +682,7 @@ function showDetailsWindow(usage: UsageData) {
 		x,
 		y,
 		resizable: false,
+		movable: false,
 		frame: false,
 		transparent: false,
 		skipTaskbar: true,
@@ -710,6 +714,9 @@ function showDetailsWindow(usage: UsageData) {
 				});
 			}
 		}
+		if (message === "__hide") {
+			if (win && !win.isDestroyed()) win.hide();
+		}
 		if (message === "__launch:claude") {
 			exec('start cmd /k "claude"');
 		}
@@ -719,11 +726,14 @@ function showDetailsWindow(usage: UsageData) {
 	});
 
 	win.on("blur", () => {
-		if (win && !win.isDestroyed()) win.close();
+		if (win && !win.isDestroyed()) win.hide();
 	});
 
-	win.on("closed", () => {
-		win = null;
+	win.on("close", (e) => {
+		if (win && !win.isDestroyed()) {
+			e.preventDefault();
+			win.hide();
+		}
 	});
 }
 
@@ -788,4 +798,8 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
 	if (refreshInterval) clearInterval(refreshInterval);
+	if (win && !win.isDestroyed()) {
+		win.removeAllListeners("close");
+		win.close();
+	}
 });
