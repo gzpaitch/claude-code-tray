@@ -783,6 +783,10 @@ function refreshTray() {
 app.whenReady().then(async () => {
 	if (process.platform === "darwin") app.dock?.hide();
 
+	app.setLoginItemSettings({
+		openAtLogin: true,
+	});
+
 	tray = new Tray(createTrayIcon());
 
 	// Fetch live OAuth usage on startup
