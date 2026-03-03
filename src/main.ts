@@ -13,6 +13,7 @@ import {
 	formatTimeUntil,
 	generateDetailsHtml,
 	getRateLimitBlocks,
+	WINDOW_HEIGHT_COLLAPSED,
 } from "./details-html";
 import { fetchOAuthUsage } from "./oauth-usage";
 import {
@@ -105,120 +106,138 @@ function buildTooltip(usage: UsageData): string {
 	return lines.join("\n");
 }
 
-function buildContextMenu(usage: UsageData): Menu {
-	const items: Electron.MenuItemConstructorOptions[] = [
-		{ label: "Claude Code Usage", enabled: false },
-		{ type: "separator" },
-	];
+type MenuItem = Electron.MenuItemConstructorOptions;
 
-	// Rate limits
+function buildRateLimitMenuItems(usage: UsageData): MenuItem[] {
 	const blocks = getRateLimitBlocks(usage.rateLimit);
-	if (blocks && usage.rateLimit) {
-		const rl = usage.rateLimit;
-		const staleTag = rl.stale ? ` (${rl.ageLabel})` : "";
+	if (!blocks || !usage.rateLimit) {
+		return [
+			{ label: "Rate limits: no data yet", enabled: false },
+			{ type: "separator" },
+		];
+	}
 
-		for (const block of blocks) {
-			const pct = Math.round(block.usage * 100);
-			items.push({ label: block.label, enabled: false });
-			items.push({
+	const rl = usage.rateLimit;
+	const staleTag = rl.stale ? ` (${rl.ageLabel})` : "";
+	const items: MenuItem[] = [];
+
+	for (const block of blocks) {
+		const pct = Math.round(block.usage * 100);
+		const countdown =
+			block.resetEpoch > Date.now()
+				? ` (in ${formatTimeUntil(block.resetEpoch)})`
+				: "";
+		items.push(
+			{ label: block.label, enabled: false },
+			{
 				label: `  ${buildProgressBar(block.usage, 20)}  ${pct}%`,
 				enabled: false,
-			});
-			const countdown =
-				block.resetEpoch > Date.now()
-					? ` (in ${formatTimeUntil(block.resetEpoch)})`
-					: "";
-			items.push({
+			},
+			{
 				label: `  Resets ${block.resetTime}${countdown}${staleTag}`,
 				enabled: false,
-			});
-			items.push({ type: "separator" });
-		}
+			},
+			{ type: "separator" },
+		);
+	}
 
-		if (rl.stale) {
-			items.push({
+	if (rl.stale) {
+		items.push(
+			{
 				label: `  Data from ${rl.ageLabel} - updates when Claude Code runs`,
 				enabled: false,
-			});
-			items.push({ type: "separator" });
-		}
-	} else {
-		items.push({ label: "Rate limits: no data yet", enabled: false });
-		items.push({ type: "separator" });
+			},
+			{ type: "separator" },
+		);
 	}
 
-	// Today
-	if (usage.today) {
-		items.push({
+	return items;
+}
+
+function buildTodayMenuItems(usage: UsageData): MenuItem[] {
+	if (!usage.today) {
+		return [{ label: "Today: no activity", enabled: false }];
+	}
+
+	const items: MenuItem[] = [
+		{
 			label: `Today: ${usage.today.messageCount} messages, ${usage.today.sessionCount} sessions`,
 			enabled: false,
-		});
+		},
+		{ label: `  ${usage.today.toolCallCount} tool calls`, enabled: false },
+	];
+
+	for (const [model, tokens] of Object.entries(usage.todayTokens)) {
 		items.push({
-			label: `  ${usage.today.toolCallCount} tool calls`,
+			label: `  ${getModelShortName(model)}: ${formatTokens(tokens)} tokens`,
 			enabled: false,
 		});
-
-		const tokenEntries = Object.entries(usage.todayTokens);
-		for (const [model, tokens] of tokenEntries) {
-			items.push({
-				label: `  ${getModelShortName(model)}: ${formatTokens(tokens)} tokens`,
-				enabled: false,
-			});
-		}
-	} else {
-		items.push({ label: "Today: no activity", enabled: false });
 	}
 
-	items.push({ type: "separator" });
+	return items;
+}
 
-	// Last 7 days
-	items.push({ label: "Last 7 days:", enabled: false });
+function buildLast7DaysMenuItems(usage: UsageData): MenuItem[] {
+	const items: MenuItem[] = [{ label: "Last 7 days:", enabled: false }];
 	for (const day of usage.last7Days) {
-		const dateLabel = day.date.slice(5);
 		items.push({
-			label: `  ${dateLabel}: ${day.messageCount} msgs, ${day.sessionCount} sessions`,
+			label: `  ${day.date.slice(5)}: ${day.messageCount} msgs, ${day.sessionCount} sessions`,
 			enabled: false,
 		});
 	}
+	return items;
+}
 
-	items.push({ type: "separator" });
-
-	// Totals by model
-	items.push({ label: "All-time by model:", enabled: false });
+function buildModelTotalsMenuItems(usage: UsageData): MenuItem[] {
+	const items: MenuItem[] = [{ label: "All-time by model:", enabled: false }];
 	for (const [model, data] of Object.entries(usage.modelUsage)) {
 		items.push({
 			label: `  ${getModelShortName(model)}: ${formatTokens(getTotalTokens(data))} total tokens`,
 			enabled: false,
 		});
 	}
+	return items;
+}
 
-	items.push({ type: "separator" });
-	items.push({
-		label: `Total: ${usage.totalMessages.toLocaleString()} messages, ${usage.totalSessions} sessions`,
-		enabled: false,
-	});
-
-	items.push({ type: "separator" });
-	items.push({ label: "Details...", click: () => showDetailsWindow(usage) });
-	items.push({ label: "Refresh", click: () => refreshTray() });
-
+function buildAutoStartMenuItem(): MenuItem {
 	const loginSettings = app.getLoginItemSettings();
-	items.push({
+	return {
 		label: "Start with Windows",
 		type: "checkbox",
 		checked: loginSettings.openAtLogin,
 		click: (menuItem) => {
 			const exePath = process.env.PORTABLE_EXECUTABLE_FILE ?? process.execPath;
-			if (menuItem.checked) {
-				app.setLoginItemSettings({ openAtLogin: true, path: exePath });
-			} else {
-				app.setLoginItemSettings({ openAtLogin: false });
-			}
+			app.setLoginItemSettings(
+				menuItem.checked
+					? { openAtLogin: true, path: exePath }
+					: { openAtLogin: false },
+			);
 		},
-	});
+	};
+}
 
-	items.push({ type: "separator" });
-	items.push({ label: "Quit", click: () => app.quit() });
+function buildContextMenu(usage: UsageData): Menu {
+	const items: MenuItem[] = [
+		{ label: "Claude Code Usage", enabled: false },
+		{ type: "separator" },
+		...buildRateLimitMenuItems(usage),
+		...buildTodayMenuItems(usage),
+		{ type: "separator" },
+		...buildLast7DaysMenuItems(usage),
+		{ type: "separator" },
+		...buildModelTotalsMenuItems(usage),
+		{ type: "separator" },
+		{
+			label: `Total: ${usage.totalMessages.toLocaleString()} messages, ${usage.totalSessions} sessions`,
+			enabled: false,
+		},
+		{ type: "separator" },
+		{ label: "Details...", click: () => showDetailsWindow(usage) },
+		{ label: "Refresh", click: () => refreshTray() },
+		buildAutoStartMenuItem(),
+		{ type: "separator" },
+		{ label: "Quit", click: () => app.quit() },
+	];
 
 	return Menu.buildFromTemplate(items);
 }
@@ -238,7 +257,7 @@ function showDetailsWindow(usage: UsageData) {
 	}
 
 	const winWidth = 400;
-	const winHeight = 420;
+	const winHeight = WINDOW_HEIGHT_COLLAPSED;
 
 	// Position near the system tray (bottom-right on Windows)
 	const trayBounds = tray?.getBounds();
@@ -371,10 +390,16 @@ async function refreshTray() {
 app.whenReady().then(async () => {
 	if (process.platform === "darwin") app.dock?.hide();
 
-	// In dev mode, ensure no stale login item is registered
 	const exePath = process.env.PORTABLE_EXECUTABLE_FILE ?? process.execPath;
 	if (exePath.includes("node_modules")) {
+		// In dev mode, ensure no stale login item is registered
 		app.setLoginItemSettings({ openAtLogin: false });
+	} else {
+		// Enable auto-start by default if not already configured
+		const loginSettings = app.getLoginItemSettings();
+		if (!loginSettings.openAtLogin) {
+			app.setLoginItemSettings({ openAtLogin: true, path: exePath });
+		}
 	}
 
 	tray = new Tray(createTrayIcon());

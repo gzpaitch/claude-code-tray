@@ -19,7 +19,7 @@
 
 - [x] **Extrair HTML para arquivo separado** -- `generateDetailsHtml()` tem ~300 linhas de template string inline no `main.ts`. Mover para um arquivo `.html` separado com placeholder injection.
 - [x] **Remover intervalo de refresh duplicado** -- Existem dois `setInterval`: um de 60s (OAuth + tray) e outro de 30s (só tray). O de 30s é redundante pois o de 60s já chama `refreshTray()`.
-- [ ] **`details-html.ts` monolítico** -- `generateDetailsHtml` tem ~300 linhas misturando CSS inline, lógica de dados e geração de HTML. Separar em: CSS em arquivo estático, funções de seção individuais (`buildRateLimitSection`, `buildTodaySection`, etc.).
-- [ ] **Constantes de altura acopladas** -- `COLLAPSED_H = 420` e `EXPANDED_H = 720` no HTML gerado precisam estar sincronizadas com `winHeight = 420` em `main.ts`. Extrair para constantes compartilhadas.
-- [ ] **`buildContextMenu` longa** -- Função de ~70 linhas que mistura condicionais, formatação e construção de estrutura. Dividir em funções auxiliares por seção.
-- [ ] **`readUsage()` síncrono exportado sem uso** -- A função `readUsage()` (síncrona) está exportada mas não é chamada externamente. Remover ou tornar interna.
+- [x] **`details-html.ts` monolítico** -- `generateDetailsHtml` tem ~300 linhas misturando CSS inline, lógica de dados e geração de HTML. Separar em: CSS em arquivo estático, funções de seção individuais (`buildRateLimitSection`, `buildTodaySection`, etc.).
+- [x] **Constantes de altura acopladas** -- `COLLAPSED_H = 420` e `EXPANDED_H = 720` no HTML gerado precisam estar sincronizadas com `winHeight = 420` em `main.ts`. Extrair para constantes compartilhadas.
+- [x] **`buildContextMenu` longa** -- Função de ~70 linhas que mistura condicionais, formatação e construção de estrutura. Dividir em funções auxiliares por seção.
+- [x] **`readUsage()` síncrono exportado sem uso** -- A função `readUsage()` (síncrona) está exportada mas não é chamada externamente. Remover ou tornar interna.

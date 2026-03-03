@@ -162,11 +162,6 @@ function parseUsage(statsRaw: string, rateLimitRaw?: string): UsageData {
 	};
 }
 
-export function readUsage(): UsageData {
-	const raw = readFileSync(STATS_PATH, "utf-8");
-	return parseUsage(raw);
-}
-
 function readFileAsync(path: string): Promise<string> {
 	return new Promise((resolve, reject) => {
 		readFileCb(path, "utf-8", (err, data) => {
