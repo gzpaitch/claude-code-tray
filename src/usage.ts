@@ -1,4 +1,10 @@
-import { readFile as readFileCb, readFileSync, watch } from "node:fs";
+import {
+	existsSync,
+	type FSWatcher,
+	readFile as readFileCb,
+	readFileSync,
+	watch,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -188,15 +194,37 @@ export function watchFiles(onChange: () => void): void {
 	};
 	const debouncedChange = debounce(onChange, 500);
 
-	try {
-		watch(RATE_LIMIT_PATH, debouncedChange);
-	} catch {
-		// file may not exist yet
+	const fileWatchers = new Map<string, FSWatcher>();
+
+	function watchFile(filePath: string) {
+		if (fileWatchers.has(filePath)) return;
+		try {
+			const watcher = watch(filePath, debouncedChange);
+			fileWatchers.set(filePath, watcher);
+		} catch {
+			// file doesn't exist yet
+		}
 	}
+
+	watchFile(RATE_LIMIT_PATH);
+	watchFile(STATS_PATH);
+
+	// Watch the directory to detect file creation
 	try {
-		watch(STATS_PATH, debouncedChange);
+		watch(CLAUDE_DIR, (_, filename) => {
+			if (!filename) return;
+			const fullPath = join(CLAUDE_DIR, filename);
+			if (
+				(fullPath === STATS_PATH || fullPath === RATE_LIMIT_PATH) &&
+				!fileWatchers.has(fullPath) &&
+				existsSync(fullPath)
+			) {
+				watchFile(fullPath);
+				debouncedChange();
+			}
+		});
 	} catch {
-		// file may not exist yet
+		// directory may not exist yet
 	}
 }
 

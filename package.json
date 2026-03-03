@@ -22,7 +22,8 @@
 		],
 		"win": {
 			"target": "portable",
-			"icon": "assets/icon.ico"
+			"icon": "assets/icon.ico",
+			"signAndEditExecutable": false
 		}
 	},
 	"pnpm": {
