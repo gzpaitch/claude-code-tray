@@ -783,9 +783,13 @@ function refreshTray() {
 app.whenReady().then(async () => {
 	if (process.platform === "darwin") app.dock?.hide();
 
-	app.setLoginItemSettings({
-		openAtLogin: true,
-	});
+	const exePath = process.env.PORTABLE_EXECUTABLE_FILE ?? process.execPath;
+	const isDevElectron = exePath.includes("node_modules");
+	if (app.isPackaged && !isDevElectron) {
+		app.setLoginItemSettings({ openAtLogin: true, path: exePath });
+	} else {
+		app.setLoginItemSettings({ openAtLogin: false });
+	}
 
 	tray = new Tray(createTrayIcon());
 
